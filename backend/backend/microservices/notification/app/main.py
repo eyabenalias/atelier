@@ -18,12 +18,14 @@ INSTANCE_HOST = os.getenv("INSTANCE_HOST", "localhost")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: register with Eureka
+    # Startup: register with Eureka with health and info URLs
     await eureka_client.init_async(
         eureka_server=EUREKA_SERVER,
         app_name="NOTIFICATION",
         instance_port=PORT,
         instance_host=INSTANCE_HOST,
+        health_check_url=f"http://{INSTANCE_HOST}:{PORT}/health",
+        status_page_url=f"http://{INSTANCE_HOST}:{PORT}/info",
     )
     yield
     # Shutdown: stop Eureka client
@@ -39,12 +41,29 @@ app = FastAPI(
     ),
     contact={"name": "Badia Abouhdid"},
     servers=[{"url": f"http://localhost:{PORT}", "description": "Local"}],
-    # Same URLs as the other microservices of the project
     docs_url="/swagger-ui",       # Swagger UI
     openapi_url="/v3/api-docs",   # OpenAPI JSON
     redoc_url="/redoc",           # alternative documentation
     lifespan=lifespan,
 )
+
+
+@app.get("/health", tags=["Actuator"])
+def health():
+    return {"status": "UP"}
+
+
+@app.get("/info", tags=["Actuator"])
+def info():
+    return {
+        "app": {
+            "name": "notification",
+            "version": "1.0.0",
+            "description": "Notification microservice (Python / FastAPI)",
+            "team": "Equipe AWD",
+        }
+    }
+
 
 app.include_router(notification.router)
 

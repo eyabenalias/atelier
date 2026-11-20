@@ -2,10 +2,27 @@ const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./config/swagger');
 const meetingRoutes = require('./routes/meeting.routes');
+const pkg = require('../package.json');
 
 const app = express();
 
 app.use(express.json());
+
+// ---- Health & Info endpoints (Actuator-compatible for Eureka) ----
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'UP' });
+});
+
+app.get('/info', (req, res) => {
+  res.status(200).json({
+    app: {
+      name: pkg.name || 'meeting',
+      version: pkg.version || '1.0.0',
+      description: pkg.description || 'Meeting microservice (Node.js / Express)',
+      team: 'Equipe AWD',
+    },
+  });
+});
 
 // ---- Swagger documentation ----
 app.get('/v3/api-docs', (req, res) => res.json(openapiSpec));

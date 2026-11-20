@@ -11,8 +11,8 @@ const client = new Eureka({
     instanceId: `${HOST}:meeting:${PORT}`,
     hostName: HOST,
     ipAddr: '127.0.0.1',
-    statusPageUrl: `http://${HOST}:${PORT}/swagger-ui`,
-    healthCheckUrl: `http://${HOST}:${PORT}/api/meetings/hello`,
+    statusPageUrl: `http://${HOST}:${PORT}/info`,
+    healthCheckUrl: `http://${HOST}:${PORT}/health`,
     port: {
       '$': PORT,
       '@enabled': 'true',

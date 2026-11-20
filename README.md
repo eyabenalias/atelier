@@ -1,6 +1,8 @@
-# Architecture Web Distribuée - Implémentation Eureka Server & Microservices
+# Architecture Web Distribuée : Eureka Server & Observabilité avec Spring Boot Actuator
 
-Ce projet implémente un registre de services distribué avec **Netflix Eureka** et intègre plusieurs microservices polyglottes (**Spring Boot**, **Node.js / Express**, **Python / FastAPI**) en tant que clients Eureka, avec support de passage à l'échelle (multi-instances).
+Ce projet regroupe les travaux pratiques d'Architecture Web Distribuée :
+1. **Atelier 0 : Implémentation « Eureka Server » et microservices polyglottes (Spring Boot, Node.js, Python)**.
+2. **Atelier 1 : Observabilité avec Spring Boot Actuator, Health Indicators, Metrics et intégration de la santé dans Eureka**.
 
 ---
 
@@ -11,150 +13,166 @@ Ce projet implémente un registre de services distribué avec **Netflix Eureka**
 
 ---
 
-## 🏗️ Architecture du Projet
+## 🏗️ Architecture des Microservices
 
-Tous les microservices s'enregistrent auprès du même serveur Eureka (`http://localhost:8761`) et se découvrent dynamiquement par leur nom de service (`spring.application.name` / VIP address).
+Tous les microservices s'enregistrent auprès du serveur de découverte Eureka (`http://localhost:8761`) et exposent leurs endpoints de santé et d'informations.
 
-| Microservice | Technologie | Port par défaut | Nom dans Eureka | Rôle |
+| Microservice | Technologie | Port(s) | Nom Eureka | Santé & Actuator |
 |---|---|---|---|---|
-| **Eureka Server** | Spring Boot | `8761` | `EUREKA` | Registre de découverte des services |
-| **Candidat** | Spring Boot + H2 | `8081` | `CANDIDAT` | Gestion des candidats et adresses |
-| **Job** | Spring Boot + MySQL | `8082` | `JOB` | Gestion des offres d'emploi et catégories |
-| **Candidature** | Spring Boot + MySQL | `8085` | `CANDIDATURE` | Gestion des candidatures |
-| **Meeting** | Node.js / Express | `8083` | `MEETING` | Gestion des entretiens (multi-instance) |
-| **Notification** | Python / FastAPI | `8084` | `NOTIFICATION` | Notifications (multi-instance) |
+| **Eureka Server** | Spring Boot | `8761` | `EUREKA` | Registre de découverte et Dashboard |
+| **Candidat** | Spring Boot + H2 | `8081`, `8091` | `CANDIDAT` | `/actuator/health`, `/actuator/info`, `/actuator/metrics` |
+| **Job** | Spring Boot + MySQL | `8082` | `JOB` | `/actuator/health` (DB MySQL), `/actuator/info` |
+| **Candidature** | Spring Boot + MySQL | `8085` | `CANDIDATURE` | `/actuator/health`, `/actuator/info` |
+| **Meeting** | Node.js / Express | `8083`, `8086` | `MEETING` | `/health`, `/info` (eureka-js-client) |
+| **Notification** | Python / FastAPI | `8084` | `NOTIFICATION` | `/health`, `/info` (py-eureka-client lifespan) |
 
 ---
 
-## ⚙️ Configuration & Réalisations
+## 🔬 Observabilité avec Spring Boot Actuator
 
-### 1. Eureka Server (Spring Boot)
-- **Dépendance** : `spring-cloud-starter-netflix-eureka-server`
-- **Annotation** : `@EnableEurekaServer` sur `EurekaApplication.java`
-- **Configuration** (`src/main/resources/application.properties`) :
-  ```properties
-  spring.application.name=eureka
-  server.port=8761
-  eureka.client.register-with-eureka=false
-  eureka.client.fetch-registry=false
-  ```
-- **Dashboard** accessible sur : [http://localhost:8761](http://localhost:8761)
+### 1. Dépendance Actuator (Spring Boot)
+Ajoutée dans les microservices `Candidat`, `Job` et `Candidature` :
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
 
----
+### 2. Configuration (`application.properties`)
+```properties
+# Exposer les endpoints health, info et metrics
+management.endpoints.web.exposure.include=health,info,metrics
 
-### 2. Microservice Candidat (Spring Boot + H2)
-- **Dépendance** : `spring-cloud-starter-netflix-eureka-client`
-- **Annotation** : `@EnableDiscoveryClient` sur `CandidatApplication.java`
-- **Configuration** (`src/main/resources/application.properties`) :
-  ```properties
-  spring.application.name=candidat
-  server.port=8081
-  eureka.client.service-url.defaultZone=http://localhost:8761/eureka
-  eureka.client.register-with-eureka=true
-  eureka.client.fetch-registry=true
-  eureka.instance.prefer-ip-address=true
-  ```
-- **Multi-instances** :
-  - Instance 1 : port `8081`
-  - Instance 2 : port `8091` (`-Dserver.port=8091`)
+# Afficher les détails des composants (db, diskSpace, ping...)
+management.endpoint.health.show-details=always
 
----
+# Transmettre le statut réel à Eureka (ex: Job passe DOWN si MySQL tombe)
+eureka.client.healthcheck.enabled=true
 
-### 3. Microservice Job (Spring Boot + MySQL)
-- **Dépendance** : `spring-cloud-starter-netflix-eureka-client`
-- **Annotation** : `@EnableDiscoveryClient` sur `JobApplication.java`
-- **Configuration** (`src/main/resources/application.properties`) :
-  ```properties
-  spring.application.name=job
-  server.port=8082
-  eureka.client.service-url.defaultZone=http://localhost:8761/eureka
-  eureka.client.register-with-eureka=true
-  eureka.client.fetch-registry=true
-  eureka.instance.prefer-ip-address=true
-  ```
+# Activer l'exposition des métadonnées applicatives dans /actuator/info
+management.info.env.enabled=true
+
+# Métadonnées exposées
+info.app.name=candidat
+info.app.version=1.0.0
+info.app.description=Microservice de gestion des candidats
+info.app.team=Equipe AWD
+```
 
 ---
 
-### 4. Microservice Meeting (Node.js / Express)
-- **Client Eureka** : `eureka-js-client` (`npm install eureka-js-client`)
-- **Configuration dynamique** : Lecture de la variable d'environnement `PORT` (défaut `8083`) et configuration du client Eureka dans `src/config/eureka.client.js`.
-- **Enregistrement & Arrêt propre** :
-  - Démarrage automatique du client Eureka à l'écoute du serveur HTTP (`eurekaClient.start()`).
-  - Désenregistrement gracieux lors de l'arrêt (`SIGINT`/`SIGTERM`).
-- **Endpoint de vérification** :
-  - `GET http://localhost:8083/api/meetings/hello`
-  - `GET http://localhost:8086/api/meetings/hello`
-  - Swagger UI : `http://localhost:8083/swagger-ui`
+## 🩺 Santé et Info des Microservices Polyglottes (Node.js & Python)
+
+### Meeting (Node.js / Express)
+1. **Routes `/health` et `/info`** :
+   - `GET /health` ➔ `{"status": "UP"}` (code 200)
+   - `GET /info` ➔ nom, version et description lus depuis `package.json`
+2. **Déclaration Eureka** (`src/config/eureka.client.js`) :
+   ```javascript
+   statusPageUrl: `http://${HOST}:${PORT}/info`,
+   healthCheckUrl: `http://${HOST}:${PORT}/health`,
+   ```
+
+### Notification (Python / FastAPI)
+1. **Routes `/health` et `/info`** :
+   - `GET /health` ➔ `{"status": "UP"}`
+   - `GET /info` ➔ métadonnées de l'application
+2. **Déclaration Eureka** (`app/main.py`) :
+   ```python
+   await eureka_client.init_async(
+       eureka_server=EUREKA_SERVER,
+       app_name="NOTIFICATION",
+       instance_port=PORT,
+       instance_host=INSTANCE_HOST,
+       health_check_url=f"http://{INSTANCE_HOST}:{PORT}/health",
+       status_page_url=f"http://{INSTANCE_HOST}:{PORT}/info",
+   )
+   ```
 
 ---
 
-### 5. Microservice Notification (Python / FastAPI)
-- **Client Eureka** : `py-eureka-client` (`pip install py-eureka-client`)
-- **Cycle de vie (Lifespan)** :
-  - Enregistrement asynchrone au démarrage via `eureka_client.init_async`
-  - Désenregistrement propre à l'arrêt via `eureka_client.stop_async`
-  - Lecture du port dynamique depuis la variable d'environnement `PORT` (défaut `8084`)
-- **Endpoint de vérification** :
-  - `GET http://localhost:8084/api/notifications/hello`
-  - Swagger UI : `http://localhost:8084/swagger-ui`
+## 📊 Réponses aux Questions de l'Atelier
+
+### Questions sur `/actuator/metrics` (Candidat)
+1. **Nombre de requêtes HTTP traitées (COUNT)** :
+   - Consultable sur : `http://localhost:8081/actuator/metrics/http.server.requests`
+   - La mesure `COUNT` indique le nombre total de requêtes HTTP interceptées par Spring Boot Actuator depuis le démarrage du microservice.
+2. **Durée de la requête la plus lente (MAX)** :
+   - La mesure `MAX` indique la latence maximale observée (en secondes).
+3. **Filtre par statut HTTP 200** :
+   - `http://localhost:8081/actuator/metrics/http.server.requests?tag=status:200`
+   - Renvoie uniquement les statistiques (`COUNT`, `TOTAL_TIME`, `MAX`) relatives aux requêtes ayant retourné un code HTTP `200 OK`.
+
+### Comportement en cas de panne de base de données (Job - MySQL)
+- Lorsque le service MySQL s'arrête :
+  1. `http://localhost:8082/actuator/health` bascule immédiatement à :
+     ```json
+     {
+       "status": "DOWN",
+       "components": {
+         "db": {
+           "status": "DOWN",
+           "details": {
+             "error": "CannotGetJdbcConnectionException: Failed to obtain JDBC Connection"
+           }
+         }
+       }
+     }
+     ```
+  2. Grâce à `eureka.client.healthcheck.enabled=true`, Eureka reçoit l'état réel et affiche `JOB` en statut **`DOWN`** dans le dashboard au lieu de continuer à router vers une instance défaillante.
+  3. Dès que MySQL redémarre, le composant `db` repasse `UP` et Eureka rétablit automatiquement le statut **`UP`**.
 
 ---
 
-## 🚀 Guide de Démarrage Rapide
+## 📸 Captures d'Écran
 
-### Prérequis
-- Java 17+ (JDK 17)
-- Node.js 18+ & npm
-- Python 3.10+
-- MySQL / MariaDB (XAMPP sur port 3306 avec base `job_db`)
+### 1. Dashboard Eureka avec tous les microservices et liens `/info`
+![Dashboard Eureka Actuator](eureka-dashboard-actuator.png)
 
-### Ordre d'exécution
-1. **Démarrer Eureka Server** :
+### 2. Endpoint `/actuator/info` (Candidat)
+![Candidat Info](candidat-info.png)
+
+### 3. Endpoint `/actuator/health` avec composant MySQL (Job)
+![Job Health](job-health.png)
+
+### 4. Endpoint `/info` (Meeting - Node.js)
+![Meeting Info](meeting-info.png)
+
+### 5. Endpoint `/info` (Notification - Python)
+![Notification Info](notification-info.png)
+
+---
+
+## 🚀 Commandes de Démarrage
+
+1. **MySQL** : Lancer MariaDB/MySQL sur le port `3306` (XAMPP).
+2. **Eureka Server** :
    ```powershell
    cd backend/backend/eureka
    ./mvnw spring-boot:run
    ```
-2. **Démarrer Candidat (Instance 1 sur 8081 & Instance 2 sur 8091)** :
+3. **Candidat** :
    ```powershell
-   # Instance 1
    cd backend/backend/microservices/candidat
    ../../eureka/mvnw spring-boot:run
-
-   # Instance 2
+   # Deuxième instance (optionnel) :
    ../../eureka/mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8091
    ```
-3. **Démarrer Job (Port 8082)** :
+4. **Job** :
    ```powershell
    cd backend/backend/microservices/job
    ../../eureka/mvnw spring-boot:run
    ```
-4. **Démarrer Meeting (Node.js - Instance 1 sur 8083 & Instance 2 sur 8086)** :
+5. **Meeting** :
    ```powershell
    cd backend/backend/microservices/meeting
    npm install
-   # Instance 1
-   $env:PORT="8083"; npm start
-   # Instance 2 (dans un autre terminal)
-   $env:PORT="8086"; npm start
+   npm start
    ```
-5. **Démarrer Notification (Python - Port 8084)** :
+6. **Notification** :
    ```powershell
    cd backend/backend/microservices/notification
    pip install -r requirements.txt
    python -m uvicorn app.main:app --host 0.0.0.0 --port 8084
    ```
-
----
-
-## 📊 Tableau de Bord Eureka
-
-Une fois tous les microservices lancés, accédez à [http://localhost:8761](http://localhost:8761).
-
-La section **Instances currently registered with Eureka** affiche :
-- **`CANDIDAT`** : 2 instances (ports `8081` et `8091`)
-- **`JOB`** : 1 instance (port `8082`)
-- **`CANDITATURE`** : 1 instance (port `8085`)
-- **`MEETING`** : 2 instances (ports `8083` et `8086`)
-- **`NOTIFICATION`** : 1 instance (port `8084`)
-
-![Dashboard Eureka](eureka-dashboard.png)
